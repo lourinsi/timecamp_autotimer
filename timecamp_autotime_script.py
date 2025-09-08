@@ -61,7 +61,7 @@ WEEKDAY_LUNCH_BREAK_RESUME_WINDOW_END = datetime.time(8, 5)    # New: End window
 
 # Final end of the workday window
 WEEKDAY_SCHEDULE_END_WINDOW_START = datetime.time(11, 30) # New: End window at 11:30 AM
-WEEKDAY_SCHEDULE_END_WINDOW_END = datetime.time(11, 35)    # New: End window at 11:35 AM
+WEEKDAY_SCHEDULE_END_WINDOW_END = datetime.time(11, 31)    # New: End window at 11:35 AM
 
 # Monday specific mid-morning stop (remains the same as before)
 MONDAY_MID_MORNING_STOP_WINDOW_START = datetime.time(9, 29, 45) # 9:29 AM and 45 seconds for Monday's mid-morning stop
@@ -89,6 +89,7 @@ SUNDAY_SCHEDULE_END_WINDOW_END = datetime.time(17, 5)
 _last_calculated_date = None
 _calculated_stop_times = {} # Stores datetime.time objects for precise stops
 _event_executed_flags = {} # Stores boolean flags for each stop event to ensure it only triggers once per day
+_shutdown_scheduled = False # Flag for autoshutdown after final stop
 
 
 # --- Helper Functions ---
@@ -155,13 +156,14 @@ def try_stop_timer(driver_instance):
         return False
 
 def _calculate_daily_times_and_reset_flags(current_date, current_day_of_week, driver_instance):
-    global _last_calculated_date, _calculated_stop_times, _event_executed_flags
+    global _last_calculated_date, _calculated_stop_times, _event_executed_flags, _shutdown_scheduled
 
     if _last_calculated_date != current_date:
         print(f"New day detected: {current_date}. Recalculating daily stop times and resetting flags.")
         _last_calculated_date = current_date
         _calculated_stop_times = {}
         _event_executed_flags = {}
+        _shutdown_scheduled = False  # Reset shutdown flag for new day
 
         # Define stop times based on day
         if current_day_of_week == 6:  # Sunday
@@ -201,6 +203,17 @@ def _calculate_daily_times_and_reset_flags(current_date, current_day_of_week, dr
                 try_stop_timer(driver_instance)
             else:
                 print("Timer is already stopped.")
+            # Initiate autoshutdown after final stop
+            print("Autoshutdown scheduled for 5 minutes.")
+            os.system('shutdown /s /t 300')
+            response = input("Do you want to halt the shutdown? (y/n): ").strip().lower()
+            if response == 'y':
+                os.system('shutdown /a')
+                print("Shutdown halted.")
+            else:
+                print("Shutdown proceeding.")
+        
+        
         
 def check_for_nan_and_recover(driver_instance):
     """
@@ -789,6 +802,17 @@ def automate_timecamp_login():
                     if try_stop_timer(driver):
                         timer_is_running = False
                         action_performed_this_iteration = True
+                        
+                        if randomized_end_datetime and now >= randomized_end_datetime and randomized_end_event_key in ['WEEKDAY_SCHEDULE_END', 'SUNDAY_SCHEDULE_END']:
+                            _event_executed_flags[randomized_end_event_key] = True
+                            print("Autoshutdown scheduled for 5 minutes.")
+                            os.system('shutdown /s /t 300')
+                            response = input("Do you want to halt the shutdown? (y/n): ").strip().lower()
+                            if response == 'y':
+                                os.system('shutdown /a')
+                                print("Shutdown halted.")
+                            else:
+                                print("Shutdown proceeding.")
                         # Optionally, you can set a flag for this event if you want to track it
 
                 # 1. Check for specific STOP triggers (based on calculated precise stop times)
@@ -987,8 +1011,6 @@ def automate_timecamp_login():
                     next_event_label = "fallback polling"
 
                 # Find the randomized end time for the current shift (workday end)
-                randomized_end_datetime = None
-                randomized_end_event_key = None
                 if current_shift_type == 'work':
                     if current_day_of_week == 6:
                         end_time = _calculated_stop_times.get('SUNDAY_SCHEDULE_END')
@@ -1012,6 +1034,16 @@ def automate_timecamp_login():
                             _event_executed_flags[randomized_end_event_key] = True
                             if not check_for_nan_and_recover(driver):
                                 print("Warning: Could not clear 'NaNh NaNm' after stopping timer at randomized end. Proceeding with caution.")
+                            # Initiate autoshutdown after final stop
+                            if randomized_end_event_key in ['WEEKDAY_SCHEDULE_END', 'SUNDAY_SCHEDULE_END']:
+                                print("Autoshutdown scheduled for 5 minutes.")
+                                os.system('shutdown /s /t 300')
+                                response = input("Do you want to halt the shutdown? (y/n): ").strip().lower()
+                                if response == 'y':
+                                    os.system('shutdown /a')
+                                    print("Shutdown halted.")
+                                else:
+                                    print("Shutdown proceeding.")
 
                 # --- Sleep Determination Phase ---
                 sleep_duration_for_this_iteration = 1 # Default to minimal sleep for responsiveness
