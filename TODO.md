@@ -1,0 +1,6 @@
+- [x] Add new time windows: WEEKDAY_AFTERNOON_STOP_WINDOW_START = datetime.time(7, 59), WEEKDAY_AFTERNOON_STOP_WINDOW_END = datetime.time(8, 1)
+- [x] In _calculate_daily_times_and_reset_flags, add calculation for 'WEEKDAY_AFTERNOON_STOP' for weekdays
+- [x] Add stop trigger for 'WEEKDAY_AFTERNOON_STOP' in the polling loop for weekdays
+- [x] Update upcoming_events logging to include 'Stop: Weekday Afternoon Break'
+- [x] Update potential_events_today to include "stop (weekday afternoon stop)"
+- [ ] Test the script to ensure new stop triggers around 8:00 on weekdays

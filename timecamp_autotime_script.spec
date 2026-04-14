@@ -4,8 +4,8 @@
 a = Analysis(
     ['timecamp_autotime_script.py'],
     pathex=[],
-    binaries=[],
-    datas=[('chromedriver.exe', '.')],
+    binaries=[('chromedriver.exe', '.')],
+    datas=[],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

@@ -69,8 +69,8 @@ MONDAY_MID_MORNING_STOP_WINDOW_START = datetime.time(9, 29, 45) # 9:29 AM and 45
 MONDAY_MID_MORNING_STOP_WINDOW_END = datetime.time(9, 29, 55) # 9:29 AM and 55 seconds for Monday's mid-morning stop
 
 # Monday specific 10 AM restart after mid-morning stop (updated)
-MONDAY_10AM_RESTART_WINDOW_START = datetime.time(10, 00, 0) # Exactly 10:00:00 AM for restart
-MONDAY_10AM_RESTART_WINDOW_END = datetime.time(10, 00, 45) # The script will select a random time within this 45-second window.
+MONDAY_10AM_RESTART_WINDOW_START = datetime.time(9, 45, 0) # Exactly 10:00:00 AM for restart
+MONDAY_10AM_RESTART_WINDOW_END = datetime.time(9, 45, 45) # The script will select a random time within this 45-second window.
 
 # Sunday Schedule (remains unchanged)
 SUNDAY_SCHEDULE_START_WINDOW_START = datetime.time(8, 55)
@@ -175,7 +175,8 @@ def _calculate_daily_times_and_reset_flags(current_date, current_day_of_week, dr
         else:  # Weekday
             _calculated_stop_times['WEEKDAY_SCHEDULE_START'] = get_random_time_in_window(WEEKDAY_SCHEDULE_START_WINDOW_START, WEEKDAY_SCHEDULE_START_WINDOW_END)
             _calculated_stop_times['WEEKDAY_LUNCH_BREAK_STOP'] = get_random_time_in_window(WEEKDAY_LUNCH_BREAK_STOP_WINDOW_START, WEEKDAY_LUNCH_BREAK_STOP_WINDOW_END)
-            _calculated_stop_times['WEEKDAY_LUNCH_BREAK_RESUME'] = get_random_time_in_window(WEEKDAY_LUNCH_BREAK_RESUME_WINDOW_START, WEEKDAY_LUNCH_BREAK_RESUME_WINDOW_END)
+            # Add an afternoon stop for weekdays (acts as second brief stop similar to Sunday)
+            _calculated_stop_times['WEEKDAY_AFTERNOON_STOP'] = get_random_time_in_window(WEEKDAY_LUNCH_BREAK_RESUME_WINDOW_START, WEEKDAY_LUNCH_BREAK_RESUME_WINDOW_END)
             _calculated_stop_times['WEEKDAY_SCHEDULE_END'] = get_random_time_in_window(WEEKDAY_SCHEDULE_END_WINDOW_START, WEEKDAY_SCHEDULE_END_WINDOW_END)
 
             if current_day_of_week == 0:  # Monday
@@ -754,7 +755,8 @@ def automate_timecamp_login():
                 else:
                     start_time = _calculated_stop_times.get('WEEKDAY_SCHEDULE_START', WEEKDAY_SCHEDULE_START_WINDOW_START)
                     lunch_stop = _calculated_stop_times.get('WEEKDAY_LUNCH_BREAK_STOP', WEEKDAY_LUNCH_BREAK_STOP_WINDOW_START)
-                    lunch_resume = _calculated_stop_times.get('WEEKDAY_LUNCH_BREAK_RESUME', WEEKDAY_LUNCH_BREAK_RESUME_WINDOW_START)
+                    # Treat the previous 'resume' window as an afternoon stop so weekdays have two brief stops
+                    afternoon_stop = _calculated_stop_times.get('WEEKDAY_AFTERNOON_STOP', WEEKDAY_LUNCH_BREAK_RESUME_WINDOW_START)
                     end_time = _calculated_stop_times.get('WEEKDAY_SCHEDULE_END', WEEKDAY_SCHEDULE_END_WINDOW_START)
 
                 # Monday special mid-morning stop window
@@ -777,9 +779,9 @@ def automate_timecamp_login():
                         current_shift_label = 'Pre-Shift (Idle)'
                     elif start_time <= current_time_of_day < lunch_stop:
                         current_shift_label = 'Morning (Timer ON)'
-                    elif lunch_stop <= current_time_of_day < lunch_resume:
+                    elif lunch_stop <= current_time_of_day < afternoon_stop:
                         current_shift_label = 'Lunch (brief stop — will restart)'
-                    elif lunch_resume <= current_time_of_day < end_time:
+                    elif afternoon_stop <= current_time_of_day < end_time:
                         current_shift_label = 'Afternoon (Timer ON)'
                     elif current_time_of_day >= end_time:
                         current_shift_label = 'Post-Shift (Long Break)'
@@ -792,8 +794,11 @@ def automate_timecamp_login():
                     # Sunday lunch breaks now restart immediately, so no stop window needed
                     pass
                 else:
-                    if lunch_stop and lunch_resume and lunch_stop <= current_time_of_day < lunch_resume:
+                    # Consider brief stop windows for weekday lunch and afternoon stop
+                    afternoon_stop = _calculated_stop_times.get('WEEKDAY_AFTERNOON_STOP', WEEKDAY_LUNCH_BREAK_RESUME_WINDOW_START)
+                    if lunch_stop and afternoon_stop and lunch_stop <= current_time_of_day < afternoon_stop:
                         in_stop_window = True
+                    # Monday mid-morning special stop
                     if current_day_of_week == 0 and mon_stop and mon_resume and mon_stop <= current_time_of_day < mon_resume:
                         in_stop_window = True
 
@@ -824,6 +829,10 @@ def automate_timecamp_login():
                     elif 'WEEKDAY_LUNCH_BREAK_STOP' in _calculated_stop_times and not _event_executed_flags.get('WEEKDAY_LUNCH_BREAK_STOP', False) and \
                          current_time_of_day >= _calculated_stop_times['WEEKDAY_LUNCH_BREAK_STOP']:
                         stop_event_to_trigger = 'WEEKDAY_LUNCH_BREAK_STOP'
+                    # Weekday afternoon stop (second brief stop)
+                    elif 'WEEKDAY_AFTERNOON_STOP' in _calculated_stop_times and not _event_executed_flags.get('WEEKDAY_AFTERNOON_STOP', False) and \
+                         current_time_of_day >= _calculated_stop_times['WEEKDAY_AFTERNOON_STOP']:
+                        stop_event_to_trigger = 'WEEKDAY_AFTERNOON_STOP'
                     # Daily final stop
                     elif 'WEEKDAY_SCHEDULE_END' in _calculated_stop_times and not _event_executed_flags.get('WEEKDAY_SCHEDULE_END', False) and \
                          current_time_of_day >= _calculated_stop_times['WEEKDAY_SCHEDULE_END']:
@@ -933,8 +942,8 @@ def automate_timecamp_login():
                     # Lunch stop and resume
                     if 'WEEKDAY_LUNCH_BREAK_STOP' in _calculated_stop_times and not _event_executed_flags.get('WEEKDAY_LUNCH_BREAK_STOP', False):
                         upcoming_events.append(('Stop: Weekday Lunch Break', _calculated_stop_times['WEEKDAY_LUNCH_BREAK_STOP']))
-                    if 'WEEKDAY_LUNCH_BREAK_RESUME' in _calculated_stop_times and not _event_executed_flags.get('WEEKDAY_LUNCH_BREAK_RESUME', False):
-                        upcoming_events.append(('Start: Weekday Lunch Resume', _calculated_stop_times['WEEKDAY_LUNCH_BREAK_RESUME']))
+                    if 'WEEKDAY_AFTERNOON_STOP' in _calculated_stop_times and not _event_executed_flags.get('WEEKDAY_AFTERNOON_STOP', False):
+                        upcoming_events.append(('Stop: Weekday Afternoon Break', _calculated_stop_times['WEEKDAY_AFTERNOON_STOP']))
 
                     # End of shift
                     if 'WEEKDAY_SCHEDULE_END' in _calculated_stop_times and not _event_executed_flags.get('WEEKDAY_SCHEDULE_END', False):
@@ -971,12 +980,11 @@ def automate_timecamp_login():
                             potential_events_today.append((datetime.datetime.combine(current_date, _calculated_stop_times['MONDAY_MID_MORNING_STOP']), "stop (monday mid-morning stop)"))
                         if 'MONDAY_10AM_RESTART' in _calculated_stop_times and not _event_executed_flags.get('MONDAY_10AM_RESTART', False):
                             potential_events_today.append((datetime.datetime.combine(current_date, _calculated_stop_times['MONDAY_10AM_RESTART']), "start (monday 10am restart)"))
-                    # Lunch stop
+                    # Lunch stop and afternoon stop
                     if 'WEEKDAY_LUNCH_BREAK_STOP' in _calculated_stop_times and not _event_executed_flags.get('WEEKDAY_LUNCH_BREAK_STOP', False):
                         potential_events_today.append((datetime.datetime.combine(current_date, _calculated_stop_times['WEEKDAY_LUNCH_BREAK_STOP']), "stop (weekday lunch stop)"))
-                    # Lunch resume (treated as a start event)
-                    if 'WEEKDAY_LUNCH_BREAK_RESUME' in _calculated_stop_times and not _event_executed_flags.get('WEEKDAY_LUNCH_BREAK_RESUME', False):
-                        potential_events_today.append((datetime.datetime.combine(current_date, _calculated_stop_times['WEEKDAY_LUNCH_BREAK_RESUME']), "start (weekday lunch resume)"))
+                    if 'WEEKDAY_AFTERNOON_STOP' in _calculated_stop_times and not _event_executed_flags.get('WEEKDAY_AFTERNOON_STOP', False):
+                        potential_events_today.append((datetime.datetime.combine(current_date, _calculated_stop_times['WEEKDAY_AFTERNOON_STOP']), "stop (weekday afternoon stop)"))
                     # Daily final stop
                     if 'WEEKDAY_SCHEDULE_END' in _calculated_stop_times and not _event_executed_flags.get('WEEKDAY_SCHEDULE_END', False):
                         potential_events_today.append((datetime.datetime.combine(current_date, _calculated_stop_times['WEEKDAY_SCHEDULE_END']), "stop (weekday daily final stop)"))

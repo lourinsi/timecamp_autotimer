@@ -1,4 +1,4 @@
-('C:\\Automations\\TimeCamp '
+('D:\\Automations\\TimeCamp '
  'Automation\\timecamp_autotimer\\build\\timecamp_autotime_script\\PYZ-00.pyz',
  [('__future__',
    'C:\\Program Files\\Python313\\Lib\\__future__.py',
