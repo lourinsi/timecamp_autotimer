@@ -40,38 +40,39 @@ PASSWORD = "Noisrevnoc@Wr0ng?"
 WAIT_TIMEOUT_SECONDS = 30
 MAX_RETRIES = 3
 SHORT_WAIT_SECONDS = 5
+RESTART_DELAY_SECONDS = 5  # Short delay after stopping to attempt immediate restart
 # Default polling interval for active shifts, and for long break checks if not sleeping precisely.
 POLLING_INTERVAL_MINUTES = 8
 
 
 # Define fixed time points for comparison (AM/PM)
-# Weekday Schedule (Monday-Saturday) - New: 3:30 AM to 11:30 AM with a lunch break
+# Weekday Schedule (Monday-Friday) - New: 3:30 AM to 11:30 AM with a lunch break
 
 # Start of the workday window
-WEEKDAY_SCHEDULE_START_WINDOW_START = datetime.time(3, 25)  # New: Start window at 3:25 AM
+WEEKDAY_SCHEDULE_START_WINDOW_START = datetime.time(3, 26)  # New: Start window at 3:25 AM
 WEEKDAY_SCHEDULE_START_WINDOW_END = datetime.time(3, 30)    # New: End window at 3:30 AM
 
-# Lunch break stop window
-WEEKDAY_LUNCH_BREAK_STOP_WINDOW_START = datetime.time(6, 55) # New: Stop window at 6:55 AM
-WEEKDAY_LUNCH_BREAK_STOP_WINDOW_END = datetime.time(7, 0)    # New: End window at 7:00 AM
+# Lunch break stop window (window used to pick a randomized STOP time during the morning)
+WEEKDAY_LUNCH_BREAK_STOP_WINDOW_START = datetime.time(6, 59) # Example: randomized stop around 03:28
+WEEKDAY_LUNCH_BREAK_STOP_WINDOW_END = datetime.time(7, 2)    # Example: randomized stop end range
 
-# Lunch break resume window
-WEEKDAY_LUNCH_BREAK_RESUME_WINDOW_START = datetime.time(8, 0) # New: Resume window at 8:00 AM
-WEEKDAY_LUNCH_BREAK_RESUME_WINDOW_END = datetime.time(8, 5)    # New: End window at 8:05 AM
+# Lunch break resume window (window used to pick a randomized RESTART time after the short stop)
+WEEKDAY_LUNCH_BREAK_RESUME_WINDOW_START = datetime.time(7, 58) # Example: randomized resume around 03:31
+WEEKDAY_LUNCH_BREAK_RESUME_WINDOW_END = datetime.time(8, 0)    # Example: randomized resume end range
 
-# Final end of the workday window
-WEEKDAY_SCHEDULE_END_WINDOW_START = datetime.time(11, 30) # New: End window at 11:30 AM
-WEEKDAY_SCHEDULE_END_WINDOW_END = datetime.time(11, 35)    # New: End window at 11:35 AM
+# Final end of the workday window (window used to pick the randomized end-of-shift STOP time)
+WEEKDAY_SCHEDULE_END_WINDOW_START = datetime.time(11, 30) # Example: randomized end-of-shift around 03:34
+WEEKDAY_SCHEDULE_END_WINDOW_END = datetime.time(11, 33)    # Example: randomized end-of-shift end range
 
 # Monday specific mid-morning stop (remains the same as before)
 MONDAY_MID_MORNING_STOP_WINDOW_START = datetime.time(9, 29, 45) # 9:29 AM and 45 seconds for Monday's mid-morning stop
 MONDAY_MID_MORNING_STOP_WINDOW_END = datetime.time(9, 29, 55) # 9:29 AM and 55 seconds for Monday's mid-morning stop
 
 # Monday specific 10 AM restart after mid-morning stop (updated)
-MONDAY_10AM_RESTART_WINDOW_START = datetime.time(10, 0, 0) # Exactly 10:00:00 AM for restart
-MONDAY_10AM_RESTART_WINDOW_END = datetime.time(10, 0, 45) # The script will select a random time within this 45-second window.
+MONDAY_10AM_RESTART_WINDOW_START = datetime.time(9, 45, 0) # Exactly 10:00:00 AM for restart
+MONDAY_10AM_RESTART_WINDOW_END = datetime.time(9, 45, 45) # The script will select a random time within this 45-second window.
 
-# Sunday Schedule (remains unchanged)
+# Saturday Schedule (remains unchanged; uses SUNDAY_* variables)
 SUNDAY_SCHEDULE_START_WINDOW_START = datetime.time(8, 55)
 SUNDAY_SCHEDULE_START_WINDOW_END = datetime.time(9, 0)
 
@@ -89,6 +90,7 @@ SUNDAY_SCHEDULE_END_WINDOW_END = datetime.time(17, 5)
 _last_calculated_date = None
 _calculated_stop_times = {} # Stores datetime.time objects for precise stops
 _event_executed_flags = {} # Stores boolean flags for each stop event to ensure it only triggers once per day
+_shutdown_scheduled = False # Flag for autoshutdown after final stop
 
 
 # --- Helper Functions ---
@@ -155,24 +157,27 @@ def try_stop_timer(driver_instance):
         return False
 
 def _calculate_daily_times_and_reset_flags(current_date, current_day_of_week, driver_instance):
-    global _last_calculated_date, _calculated_stop_times, _event_executed_flags
+    global _last_calculated_date, _calculated_stop_times, _event_executed_flags, _shutdown_scheduled
 
     if _last_calculated_date != current_date:
         print(f"New day detected: {current_date}. Recalculating daily stop times and resetting flags.")
         _last_calculated_date = current_date
         _calculated_stop_times = {}
         _event_executed_flags = {}
+        _shutdown_scheduled = False  # Reset shutdown flag for new day
 
         # Define stop times based on day
-        if current_day_of_week == 6:  # Sunday
+        # NOTE: Saturday (weekday number 5) now uses the previous Sunday schedule variables.
+        if current_day_of_week == 5:  # Saturday (was previously Sunday)
             _calculated_stop_times['SUNDAY_SCHEDULE_START'] = get_random_time_in_window(SUNDAY_SCHEDULE_START_WINDOW_START, SUNDAY_SCHEDULE_START_WINDOW_END)
             _calculated_stop_times['SUNDAY_LUNCH_BREAK_STOP'] = get_random_time_in_window(SUNDAY_LUNCH_BREAK_STOP_WINDOW_START, SUNDAY_LUNCH_BREAK_STOP_WINDOW_END)
-            _calculated_stop_times['SUNDAY_AFTERNOON_RESUME'] = get_random_time_in_window(SUNDAY_AFTERNOON_RESUME_WINDOW_START, SUNDAY_AFTERNOON_RESUME_WINDOW_END)
+            _calculated_stop_times['SUNDAY_AFTERNOON_STOP'] = get_random_time_in_window(SUNDAY_AFTERNOON_RESUME_WINDOW_START, SUNDAY_AFTERNOON_RESUME_WINDOW_END)
             _calculated_stop_times['SUNDAY_SCHEDULE_END'] = get_random_time_in_window(SUNDAY_SCHEDULE_END_WINDOW_START, SUNDAY_SCHEDULE_END_WINDOW_END)
         else:  # Weekday
             _calculated_stop_times['WEEKDAY_SCHEDULE_START'] = get_random_time_in_window(WEEKDAY_SCHEDULE_START_WINDOW_START, WEEKDAY_SCHEDULE_START_WINDOW_END)
             _calculated_stop_times['WEEKDAY_LUNCH_BREAK_STOP'] = get_random_time_in_window(WEEKDAY_LUNCH_BREAK_STOP_WINDOW_START, WEEKDAY_LUNCH_BREAK_STOP_WINDOW_END)
-            _calculated_stop_times['WEEKDAY_LUNCH_BREAK_RESUME'] = get_random_time_in_window(WEEKDAY_LUNCH_BREAK_RESUME_WINDOW_START, WEEKDAY_LUNCH_BREAK_RESUME_WINDOW_END)
+            # Add an afternoon stop for weekdays (acts as second brief stop similar to Sunday)
+            _calculated_stop_times['WEEKDAY_AFTERNOON_STOP'] = get_random_time_in_window(WEEKDAY_LUNCH_BREAK_RESUME_WINDOW_START, WEEKDAY_LUNCH_BREAK_RESUME_WINDOW_END)
             _calculated_stop_times['WEEKDAY_SCHEDULE_END'] = get_random_time_in_window(WEEKDAY_SCHEDULE_END_WINDOW_START, WEEKDAY_SCHEDULE_END_WINDOW_END)
 
             if current_day_of_week == 0:  # Monday
@@ -191,7 +196,7 @@ def _calculate_daily_times_and_reset_flags(current_date, current_day_of_week, dr
                 print(f"Info: Marked past event '{event_key}' as executed for today ({current_date}).")
 
         # Final stop enforcement
-        final_key = 'WEEKDAY_SCHEDULE_END' if current_day_of_week != 6 else 'SUNDAY_SCHEDULE_END'
+        final_key = 'WEEKDAY_SCHEDULE_END' if current_day_of_week != 5 else 'SUNDAY_SCHEDULE_END'
         final_stop_time = _calculated_stop_times.get(final_key)
 
         if final_stop_time and now_time >= final_stop_time:
@@ -201,6 +206,17 @@ def _calculate_daily_times_and_reset_flags(current_date, current_day_of_week, dr
                 try_stop_timer(driver_instance)
             else:
                 print("Timer is already stopped.")
+            # Initiate autoshutdown after final stop
+            print("Autoshutdown scheduled for 5 minutes.")
+            os.system('shutdown /s /t 300')
+            response = input("Do you want to halt the shutdown? (y/n): ").strip().lower()
+            if response == 'y':
+                os.system('shutdown /a')
+                print("Shutdown halted.")
+            else:
+                print("Shutdown proceeding.")
+        
+        
         
 def check_for_nan_and_recover(driver_instance):
     """
@@ -235,7 +251,8 @@ def check_for_nan_and_recover(driver_instance):
 
 def _get_current_shift_type(current_time_of_day, current_day_of_week, calculated_stop_times):
     # Use calculated randomized times for start/end
-    if current_day_of_week == 6:  # Sunday
+    # Saturday (5) uses the special weekend schedule variables (previously labeled 'SUNDAY_*')
+    if current_day_of_week == 5:  # Saturday
         sunday_start = calculated_stop_times.get('SUNDAY_SCHEDULE_START', SUNDAY_SCHEDULE_START_WINDOW_START)
         sunday_end = calculated_stop_times.get('SUNDAY_SCHEDULE_END', SUNDAY_SCHEDULE_START_WINDOW_END)
 
@@ -244,25 +261,12 @@ def _get_current_shift_type(current_time_of_day, current_day_of_week, calculated
         else:
             return 'long_break'
 
-    else:  # Weekday
+    else:  # Weekday (Mon-Fri) and Sunday will be treated as long_break by default
         weekday_start = calculated_stop_times.get('WEEKDAY_SCHEDULE_START', WEEKDAY_SCHEDULE_START_WINDOW_START)
-        weekday_lunch_stop = calculated_stop_times.get('WEEKDAY_LUNCH_BREAK_STOP', WEEKDAY_LUNCH_BREAK_STOP_WINDOW_END)
-        weekday_lunch_resume = calculated_stop_times.get('WEEKDAY_LUNCH_BREAK_RESUME', WEEKDAY_LUNCH_BREAK_RESUME_WINDOW_START)
         weekday_end = calculated_stop_times.get('WEEKDAY_SCHEDULE_END', WEEKDAY_SCHEDULE_END_WINDOW_END)
 
-        if current_day_of_week == 0:  # Monday
-            monday_break_stop = calculated_stop_times.get('MONDAY_MID_MORNING_STOP', MONDAY_MID_MORNING_STOP_WINDOW_END)
-            monday_resume = calculated_stop_times.get('MONDAY_10AM_RESTART', MONDAY_10AM_RESTART_WINDOW_START)
-
-            if monday_break_stop <= current_time_of_day < monday_resume:
-                return 'long_break'
-
-        # --- Use randomized start/end for work period ---
         if current_time_of_day < weekday_start or current_time_of_day >= weekday_end:
             return 'long_break'
-        if weekday_lunch_stop <= current_time_of_day < weekday_lunch_resume:
-            return 'long_break'
-
         return 'work'
     
     
@@ -612,16 +616,17 @@ def automate_timecamp_login():
             print(f"Script started at {now.strftime('%H:%M:%S')}. Current time is within an active work period. Proceeding directly to main polling loop.")
             # The initial perform_post_sleep_health_check is now covered by wait_for_main_dashboard_load
             # and the subsequent check_for_nan_and_recover in the loop.
-            # No prompt, no initial deep sleep if within an active work block.
+            # No prompt, no initial deep sleep if within a active work block.
         else: # initial_shift_type is 'long_break'
             # Determine the *earliest upcoming start time* to wake up for
             next_calculated_start_datetime = None
 
             # Scenario 1: Current day's shift start (if it's still in the future)
-            if current_day_of_week == 6: # Sunday
+            # Saturday now uses the special (previously Sunday) schedule
+            if current_day_of_week == 5: # Saturday
                 if current_time_of_day < SUNDAY_SCHEDULE_START_WINDOW_START:
                     next_calculated_start_datetime = datetime.datetime.combine(current_date, get_random_time_in_window(SUNDAY_SCHEDULE_START_WINDOW_START, SUNDAY_SCHEDULE_START_WINDOW_END))
-            else: # Weekday (Mon-Sat)
+            else: # Weekday (Mon-Fri) or Sunday (off)
                 # --- NEW: If within weekday start window, start immediately ---
                 if WEEKDAY_SCHEDULE_START_WINDOW_START <= current_time_of_day <= WEEKDAY_SCHEDULE_START_WINDOW_END:
                     print(f"Current time ({now.strftime('%H:%M:%S')}) is within the weekday start window ({WEEKDAY_SCHEDULE_START_WINDOW_START.strftime('%H:%M')} - {WEEKDAY_SCHEDULE_START_WINDOW_END.strftime('%H:%M')}). Starting work shift immediately.")
@@ -645,13 +650,11 @@ def automate_timecamp_login():
                 next_start_window_start_time = WEEKDAY_SCHEDULE_START_WINDOW_START
                 next_start_window_end_time = WEEKDAY_SCHEDULE_START_WINDOW_END
 
-                if current_day_of_week == 5: # If Saturday, next start is Sunday
+                # If it's Saturday today, the next workday will be Monday (skip Sunday)
+                if current_day_of_week == 5: # Saturday -> next start is Monday (in 2 days)
+                    days_to_add = 2
+                elif current_day_of_week == 6: # Sunday -> next start is Monday
                     days_to_add = 1
-                    next_start_window_start_time = SUNDAY_SCHEDULE_START_WINDOW_START
-                    next_start_window_end_time = SUNDAY_SCHEDULE_START_WINDOW_END
-                elif current_day_of_week == 6: # If Sunday, next start is Monday
-                    days_to_add = 1 # Already Sunday, next day is Monday
-                    # next_start_window_start_time and next_start_window_end_time are already for weekday
                 
                 next_day_date = now.date() + datetime.timedelta(days=days_to_add)
                 next_calculated_start_datetime = datetime.datetime.combine(next_day_date, get_random_time_in_window(next_start_window_start_time, next_start_window_end_time))
@@ -669,20 +672,43 @@ def automate_timecamp_login():
 
 
             # --- Initial Deep Sleep Logic (re-using next_calculated_start_datetime) ---
-            if next_calculated_start_datetime > now: # If the determined next start is in the future
-                sleep_seconds = (next_calculated_start_datetime - now).total_seconds()
-                if sleep_seconds > 5: # Only deep sleep if more than 5 seconds
-                    print(f"Current time ({now.strftime('%H:%M:%S')}) is before the first shift. Going into deep sleep for {int(sleep_seconds / 60)} minutes until randomized start at {next_calculated_start_datetime.strftime('%H:%M')} on {next_calculated_start_datetime.date()}.")
-                    time.sleep(sleep_seconds)
-                    print(f"Woke up from deep sleep at {datetime.datetime.now().strftime('%H:%M:%S')}.")
-                    perform_post_sleep_health_check(driver, current_day_of_week)
-                    if not check_for_nan_and_recover(driver):
-                        print("Warning: Could not clear 'NaNh NaNm' after deep sleep. Proceeding with caution.")
+            if next_calculated_start_datetime > now:  # If the determined next start is in the future
+                # Determine the configured start window (weekday vs saturday-special)
+                if current_day_of_week == 5:
+                    window_start_time = SUNDAY_SCHEDULE_START_WINDOW_START
+                    window_end_time = SUNDAY_SCHEDULE_START_WINDOW_END
                 else:
-                    print("Current time is very close to the first shift start. Starting polling immediately.")
-                    perform_post_sleep_health_check(driver, current_day_of_week)
-                    if not check_for_nan_and_recover(driver):
-                        print("Warning: Could not clear 'NaNh NaNm' at script start. Proceeding with caution.")
+                    window_start_time = WEEKDAY_SCHEDULE_START_WINDOW_START
+                    window_end_time = WEEKDAY_SCHEDULE_START_WINDOW_END
+
+                window_start_dt = datetime.datetime.combine(current_date, window_start_time)
+
+                # If we're before the start of the window, deep sleep until the window starts
+                if now < window_start_dt:
+                    time_to_window_start = (window_start_dt - now).total_seconds()
+                    if time_to_window_start > 5:
+                        print(f"Current time ({now.strftime('%H:%M:%S')}) is before the start window. Going into deep sleep for {int(time_to_window_start)} seconds until window start at {window_start_dt.strftime('%H:%M:%S')}.")
+                        time.sleep(time_to_window_start)
+
+                # At (or just after) window start: pick randomized start inside the window
+                perform_post_sleep_health_check(driver, current_day_of_week)
+                if not check_for_nan_and_recover(driver):
+                    print("Warning: Could not clear 'NaNh NaNm' after deep sleep. Proceeding with caution.")
+
+                randomized_start_time = get_random_time_in_window(window_start_time, window_end_time)
+                randomized_start_dt = datetime.datetime.combine(current_date, randomized_start_time)
+                now_after = datetime.datetime.now()
+
+                # If randomized start is still in the future, sleep the small remaining seconds
+                if randomized_start_dt > now_after:
+                    sleep_seconds = (randomized_start_dt - now_after).total_seconds()
+                    if sleep_seconds > 0:
+                        print(f"Sleeping {int(sleep_seconds)} seconds until randomized start at {randomized_start_dt.strftime('%H:%M:%S')}.")
+                        time.sleep(sleep_seconds)
+
+                # Final wake at randomized start
+                print(f"Woke up from deep sleep at {datetime.datetime.now().strftime('%H:%M:%S')}.")
+
             else:
                 # This case means next_calculated_start_datetime is in the past or current time,
                 # which means we should just proceed to the main loop.
@@ -718,117 +744,144 @@ def automate_timecamp_login():
 
                 # Determine current shift type for logging and action
                 current_shift_type = _get_current_shift_type(current_time_of_day, current_day_of_week, _calculated_stop_times)
-                current_shift_label = ""
-                if current_shift_type == 'work':
-                    if current_day_of_week == 6: # Sunday
-                        current_shift_label = "Sunday Work Shift"
-                    else: # Weekday (Monday-Saturday)
-                        # All are 'work' type, but labels indicate timer expectation for stops/restarts
-                        # Check specific windows for more precise labeling
-                        is_monday_mid_morning_stop_window = (current_day_of_week == 0 and 
-                                                             current_time_of_day >= MONDAY_MID_MORNING_STOP_WINDOW_START and 
-                                                             current_time_of_day < MONDAY_MID_MORNING_STOP_WINDOW_END)
-                        is_weekday_mid_morning_stop_window = (current_day_of_week != 0 and 
-                                                              current_time_of_day >= WEEKDAY_SCHEDULE_START_WINDOW_START and
-                                                              current_time_of_day < WEEKDAY_SCHEDULE_START_WINDOW_END)
-                        is_lunch_stop_window = (current_time_of_day >= WEEKDAY_LUNCH_BREAK_STOP_WINDOW_START and 
-                                                current_time_of_day < WEEKDAY_LUNCH_BREAK_STOP_WINDOW_END)
+                # Build a descriptive label for logs (e.g., 'Start', 'Morning', 'Lunch (brief stop — will restart)', 'Lunch Resume', 'End')
+                current_shift_label = current_shift_type
 
-                        if is_monday_mid_morning_stop_window or is_weekday_mid_morning_stop_window or is_lunch_stop_window:
-                            current_shift_label = "Scheduled Timer Stop Window (Timer OFF, will immediately restart)"
-                        elif current_day_of_week == 0 and current_time_of_day < MONDAY_MID_MORNING_STOP_WINDOW_START:
-                            current_shift_label = "Monday Early Morning Shift (Timer ON)"
-                        elif current_day_of_week != 0 and current_time_of_day < WEEKDAY_SCHEDULE_START_WINDOW_START:
-                            current_shift_label = "Weekday Early Morning Shift (Timer ON)"
-                        elif current_time_of_day >= WEEKDAY_SCHEDULE_START_WINDOW_END and current_time_of_day < WEEKDAY_LUNCH_BREAK_STOP_WINDOW_START:
-                            current_shift_label = "Pre-Lunch Segment (Timer ON)"
-                        elif current_time_of_day >= WEEKDAY_LUNCH_BREAK_STOP_WINDOW_END and current_time_of_day < WEEKDAY_SCHEDULE_END_WINDOW_START:
-                            current_shift_label = "Post-Lunch Segment (Timer ON)"
-                        else:
-                            current_shift_label = "Work Shift (Timer ON - Fallback)" # Fallback, should ideally not be hit
-                else: # 'long_break'
-                    # Determine the correct daily final stop time for the current day for labeling
-                    weekday_daily_final_stop_time_for_label = _calculated_stop_times.get('WEEKDAY_DAILY_FINAL_STOP', WEEKDAY_SCHEDULE_END_WINDOW_END)
+                # Prepare commonly used event times (fallback to configured windows)
+                # Saturday uses the special weekend schedule variables (previously labeled 'SUNDAY_*')
+                if current_day_of_week == 5:
+                    start_time = _calculated_stop_times.get('SUNDAY_SCHEDULE_START', SUNDAY_SCHEDULE_START_WINDOW_START)
+                    lunch_stop = _calculated_stop_times.get('SUNDAY_LUNCH_BREAK_STOP', SUNDAY_LUNCH_BREAK_STOP_WINDOW_START)
+                    lunch_resume = _calculated_stop_times.get('SUNDAY_AFTERNOON_RESUME', SUNDAY_AFTERNOON_RESUME_WINDOW_START)
+                    end_time = _calculated_stop_times.get('SUNDAY_SCHEDULE_END', SUNDAY_SCHEDULE_END_WINDOW_START)
+                else:
+                    start_time = _calculated_stop_times.get('WEEKDAY_SCHEDULE_START', WEEKDAY_SCHEDULE_START_WINDOW_START)
+                    lunch_stop = _calculated_stop_times.get('WEEKDAY_LUNCH_BREAK_STOP', WEEKDAY_LUNCH_BREAK_STOP_WINDOW_START)
+                    # Treat the previous 'resume' window as an afternoon stop so weekdays have two brief stops
+                    afternoon_stop = _calculated_stop_times.get('WEEKDAY_AFTERNOON_STOP', WEEKDAY_LUNCH_BREAK_RESUME_WINDOW_START)
+                    end_time = _calculated_stop_times.get('WEEKDAY_SCHEDULE_END', WEEKDAY_SCHEDULE_END_WINDOW_START)
 
-                    # Specific Monday 9:30 AM - 10:00 AM break
-                    if current_day_of_week == 0 and \
-                       current_time_of_day >= _calculated_stop_times.get('MONDAY_MID_MORNING_STOP', MONDAY_MID_MORNING_STOP_WINDOW_END) and \
-                       current_time_of_day < _calculated_stop_times.get('MONDAY_10AM_RESTART', MONDAY_10AM_RESTART_WINDOW_START):
-                        current_shift_label = "Monday Mid-Morning Explicit Break (Timer OFF, restarts 10 AM)"
-                    elif current_day_of_week == 6:
-                        if current_time_of_day < SUNDAY_SCHEDULE_START_WINDOW_START:
-                            current_shift_label = "Pre-Sunday Shift (Long Break)"
-                        else: # After Sunday's final stop
-                            current_shift_label = "Post-Sunday Work Hours (Long Break)"
-                    else: # Weekday long breaks (primarily overnight or after 2 PM)
-                        if current_time_of_day < WEEKDAY_SCHEDULE_START_WINDOW_START:
-                            current_shift_label = "Pre-Work Hours (Long Break)"
-                        elif current_time_of_day >= weekday_daily_final_stop_time_for_label:
-                            current_shift_label = "Post-Work Hours (Long Break)"
-                        else: # This should not be hit if _get_current_shift_type logic is tight
-                            current_shift_label = "Unexpected Long Break State" 
-                
-                print(f"\n--- Polling at {now.strftime('%Y-%m-%d %H:%M:%S')} - Current Shift: {current_shift_label} ---")
+                # Monday special mid-morning stop window
+                mon_stop = _calculated_stop_times.get('MONDAY_MID_MORNING_STOP', MONDAY_MID_MORNING_STOP_WINDOW_START) if current_day_of_week == 0 else None
+                mon_resume = _calculated_stop_times.get('MONDAY_10AM_RESTART', MONDAY_10AM_RESTART_WINDOW_START) if current_day_of_week == 0 else None
+
+                # Determine label based on where current_time_of_day falls
+                if current_day_of_week == 5:
+                    if current_time_of_day < start_time:
+                        current_shift_label = 'Pre-Saturday Start'
+                    elif start_time <= current_time_of_day < end_time:
+                        current_shift_label = 'Saturday Work Hours (Timer ON)'
+                    else:
+                        current_shift_label = 'Post-Saturday Hours (Long Break)'
+                else:
+                    # Weekday labeling
+                    if mon_stop and mon_stop <= current_time_of_day < mon_resume:
+                        current_shift_label = 'Monday Mid-Morning (brief stop — will restart)'
+                    elif current_time_of_day < start_time:
+                        current_shift_label = 'Pre-Shift (Idle)'
+                    elif start_time <= current_time_of_day < lunch_stop:
+                        current_shift_label = 'Morning (Timer ON)'
+                    elif lunch_stop <= current_time_of_day < afternoon_stop:
+                        current_shift_label = 'Lunch (brief stop — will restart)'
+                    elif afternoon_stop <= current_time_of_day < end_time:
+                        current_shift_label = 'Afternoon (Timer ON)'
+                    elif current_time_of_day >= end_time:
+                        current_shift_label = 'Post-Shift (Long Break)'
+                    else:
+                        current_shift_label = current_shift_type
+
+                # Detect short in-shift stop windows so we don't restart during them
+                in_stop_window = False
+                if current_day_of_week == 5:
+                    # Saturday lunch breaks now restart immediately, so no stop window needed
+                    pass
+                else:
+                    # Consider brief stop windows for weekday lunch and afternoon stop
+                    afternoon_stop = _calculated_stop_times.get('WEEKDAY_AFTERNOON_STOP', WEEKDAY_LUNCH_BREAK_RESUME_WINDOW_START)
+                    if lunch_stop and afternoon_stop and lunch_stop <= current_time_of_day < afternoon_stop:
+                        in_stop_window = True
+                    # Monday mid-morning special stop
+                    if current_day_of_week == 0 and mon_stop and mon_resume and mon_stop <= current_time_of_day < mon_resume:
+                        in_stop_window = True
 
                 timer_is_running = is_timer_running(driver) # Initial check for this iteration
-                print(f"TimeCamp timer status: {'Running' if timer_is_running else 'Stopped'}")
-
-                # Determine if the timer *should* be running based on the current shift type
-                # It should always be running during 'work' periods, unless it's a long break.
-                should_be_running_for_timer = (current_shift_type == 'work')
-
-                print(f"Timer should be running: {'Yes' if should_be_running_for_timer else 'No'}")
-
-
-                # --- Action Phase: Prioritize immediate action ---
-                action_performed_this_iteration = False # Flag to indicate if a start/stop occurred
-
-                # --- NEW: Stop timer if in long_break and timer is running ---
-                if current_shift_type == 'long_break' and timer_is_running:
-                    print(f"[{current_shift_label}] Timer is running during a long break. Attempting to stop timer.")
-                    if try_stop_timer(driver):
-                        timer_is_running = False
-                        action_performed_this_iteration = True
-                        # Optionally, you can set a flag for this event if you want to track it
+                # Always attempt to run timer during 'work' periods except while inside a short stop window
+                should_be_running_for_timer = (current_shift_type == 'work') and (not in_stop_window)
+                # --- Action Phase ---
+                action_performed_this_iteration = False
 
                 # 1. Check for specific STOP triggers (based on calculated precise stop times)
                 stop_event_to_trigger = None
-                if current_day_of_week == 6: # Sunday
-                    if 'SUNDAY_LUNCH_STOP' in _calculated_stop_times and not _event_executed_flags['SUNDAY_LUNCH_STOP'] and \
-                       current_time_of_day >= _calculated_stop_times['SUNDAY_LUNCH_STOP']:
-                        stop_event_to_trigger = 'SUNDAY_LUNCH_STOP'
-                    elif 'SUNDAY_FINAL_STOP' in _calculated_stop_times and not _event_executed_flags['SUNDAY_FINAL_STOP'] and \
-                         current_time_of_day >= _calculated_stop_times['SUNDAY_FINAL_STOP']:
-                        stop_event_to_trigger = 'SUNDAY_FINAL_STOP'
-                else: # Weekday
-                    # Check for Monday's specific mid-morning stop
-                    if current_day_of_week == 0 and 'MONDAY_MID_MORNING_STOP' in _calculated_stop_times and not _event_executed_flags['MONDAY_MID_MORNING_STOP'] and \
+                if current_day_of_week == 5:  # Saturday
+                    if 'SUNDAY_LUNCH_BREAK_STOP' in _calculated_stop_times and not _event_executed_flags.get('SUNDAY_LUNCH_BREAK_STOP', False) and \
+                       current_time_of_day >= _calculated_stop_times['SUNDAY_LUNCH_BREAK_STOP']:
+                        stop_event_to_trigger = 'SUNDAY_LUNCH_BREAK_STOP'
+                    elif 'SUNDAY_AFTERNOON_STOP' in _calculated_stop_times and not _event_executed_flags.get('SUNDAY_AFTERNOON_STOP', False) and \
+                         current_time_of_day >= _calculated_stop_times['SUNDAY_AFTERNOON_STOP']:
+                        stop_event_to_trigger = 'SUNDAY_AFTERNOON_STOP'
+                    elif 'SUNDAY_SCHEDULE_END' in _calculated_stop_times and not _event_executed_flags.get('SUNDAY_SCHEDULE_END', False) and \
+                         current_time_of_day >= _calculated_stop_times['SUNDAY_SCHEDULE_END']:
+                        stop_event_to_trigger = 'SUNDAY_SCHEDULE_END'
+                else:  # Weekday
+                    # Monday specific mid-morning stop
+                    if current_day_of_week == 0 and 'MONDAY_MID_MORNING_STOP' in _calculated_stop_times and not _event_executed_flags.get('MONDAY_MID_MORNING_STOP', False) and \
                        current_time_of_day >= _calculated_stop_times['MONDAY_MID_MORNING_STOP']:
                         stop_event_to_trigger = 'MONDAY_MID_MORNING_STOP'
-                    # Check for other weekdays' mid-morning stop
-                    elif current_day_of_week != 0 and 'WEEKDAY_MORNING_STOP_1' in _calculated_stop_times and not _event_executed_flags['WEEKDAY_MORNING_STOP_1'] and \
-                         current_time_of_day >= _calculated_stop_times['WEEKDAY_MORNING_STOP_1']:
-                        stop_event_to_trigger = 'WEEKDAY_MORNING_STOP_1'
-                    
-                    elif 'WEEKDAY_LUNCH_STOP' in _calculated_stop_times and not _event_executed_flags['WEEKDAY_LUNCH_STOP'] and \
-                         current_time_of_day >= _calculated_stop_times['WEEKDAY_LUNCH_STOP']:
-                        stop_event_to_trigger = 'WEEKDAY_LUNCH_STOP'
-                    
-                    # Check for the daily final stop (2 PM)
-                    elif 'WEEKDAY_DAILY_FINAL_STOP' in _calculated_stop_times and not _event_executed_flags['WEEKDAY_DAILY_FINAL_STOP'] and \
-                         current_time_of_day >= _calculated_stop_times['WEEKDAY_DAILY_FINAL_STOP']:
-                        stop_event_to_trigger = 'WEEKDAY_DAILY_FINAL_STOP'
-                
+                    # Weekday lunch break stop
+                    elif 'WEEKDAY_LUNCH_BREAK_STOP' in _calculated_stop_times and not _event_executed_flags.get('WEEKDAY_LUNCH_BREAK_STOP', False) and \
+                         current_time_of_day >= _calculated_stop_times['WEEKDAY_LUNCH_BREAK_STOP']:
+                        stop_event_to_trigger = 'WEEKDAY_LUNCH_BREAK_STOP'
+                    # Weekday afternoon stop (second brief stop)
+                    elif 'WEEKDAY_AFTERNOON_STOP' in _calculated_stop_times and not _event_executed_flags.get('WEEKDAY_AFTERNOON_STOP', False) and \
+                         current_time_of_day >= _calculated_stop_times['WEEKDAY_AFTERNOON_STOP']:
+                        stop_event_to_trigger = 'WEEKDAY_AFTERNOON_STOP'
+                    # Daily final stop
+                    elif 'WEEKDAY_SCHEDULE_END' in _calculated_stop_times and not _event_executed_flags.get('WEEKDAY_SCHEDULE_END', False) and \
+                         current_time_of_day >= _calculated_stop_times['WEEKDAY_SCHEDULE_END']:
+                        stop_event_to_trigger = 'WEEKDAY_SCHEDULE_END'
+
+                # If there's a scheduled stop event due now, stop timer briefly and mark it executed
                 if stop_event_to_trigger and timer_is_running:
                     print(f"[{current_shift_label}] Time is {current_time_of_day.strftime('%H:%M:%S')}. Timer is Running. Triggered STOP action for {stop_event_to_trigger} at {_calculated_stop_times[stop_event_to_trigger].strftime('%H:%M:%S')}. Attempting to STOP timer.")
                     if try_stop_timer(driver):
                         timer_is_running = False
                         action_performed_this_iteration = True
                         _event_executed_flags[stop_event_to_trigger] = True # Mark as executed for today
-                        # NEW: Check for NaN after stopping the timer
                         if not check_for_nan_and_recover(driver):
                             print("Warning: Could not clear 'NaNh NaNm' after stopping timer. Proceeding with caution.")
-
+                        # For final end-of-shift stops, schedule shutdown. For short stops, immediately restart timer.
+                        if stop_event_to_trigger in ['WEEKDAY_SCHEDULE_END', 'SUNDAY_SCHEDULE_END']:
+                            print("Autoshutdown scheduled for 5 minutes.")
+                            os.system('shutdown /s /t 300')
+                            response = input("Do you want to continue shutdown? (y/n): ").strip().lower()
+                            yes_variants = {'y', 'yy', 'yyy', 'yes', 'ye', 'ys'}
+                            if response.lower() in yes_variants:
+                                print("Shutdown proceeding.")
+                            else:
+                                os.system('shutdown /a')
+                                print("Shutdown halted.")
+                        else:
+                            # Immediately restart timer after a brief stop (applies to weekday lunch breaks, Monday mid-morning, and Sunday lunch break)
+                            print("Waiting 5 seconds before attempting immediate restart after stop event.")
+                            time.sleep(RESTART_DELAY_SECONDS)
+                            if not check_for_nan_and_recover(driver):
+                                print("Warning: Could not clear 'NaNh NaNm' before starting timer. Proceeding with caution.")
+                            try:
+                                start_timer_button = WebDriverWait(driver, SHORT_WAIT_SECONDS).until(
+                                    EC.element_to_be_clickable((By.ID, "timer-start-button"))
+                                )
+                                start_timer_button.click()
+                                print("Successfully clicked 'Start timer' button. Timer is now running.")
+                                timer_is_running = True
+                                action_performed_this_iteration = True
+                            except TimeoutException:
+                                print(f"Error: 'Start timer' button not found or clickable within {SHORT_WAIT_SECONDS} seconds. Refreshing page and retrying on next poll.")
+                                driver.refresh()
+                                time.sleep(5)
+                            except WebDriverException as e:
+                                print(f"WebDriver Error starting timer: {e}. Refreshing page and retrying on next poll.")
+                                driver.refresh()
+                                time.sleep(5)
 
                 # 2. Handle starting the timer if it should be running (for timer) but is not
                 if should_be_running_for_timer and not timer_is_running:
@@ -841,8 +894,6 @@ def automate_timecamp_login():
                     # NEW: Check for NaN after the wait, before attempting to start
                     if not check_for_nan_and_recover(driver):
                         print("Warning: Could not clear 'NaNh NaNm' before starting timer. Proceeding with caution.")
-                        # If NaN persists, it might be better to skip this start attempt and retry on next poll
-                        # or implement more aggressive recovery. For now, we proceed.
 
                     try:
                         start_timer_button = WebDriverWait(driver, SHORT_WAIT_SECONDS).until(
@@ -870,30 +921,45 @@ def automate_timecamp_login():
                         # but no action was triggered (e.g., due to a previous error or very brief overlap).
                         print(f"[{current_shift_label}] Time is {current_time_of_day.strftime('%H:%M:%S')}. WARNING: Timer state ({'Running' if timer_is_running else 'Stopped'}) does not match desired state ({'Running' if should_be_running_for_timer else 'Stopped'}), but no action was triggered. This might indicate a logic error or a very brief window.")
 
-                # --- Enhanced Logging for Next Timer Stop Event ---
-                if current_shift_type == 'work':
-                    # Find the next stop event (lunch break or end of shift)
-                    stop_events = []
-                    if current_day_of_week == 6:  # Sunday
-                        stop_events.append(('Lunch Break', _calculated_stop_times.get('SUNDAY_LUNCH_BREAK_STOP')))
-                        stop_events.append(('End of Shift', _calculated_stop_times.get('SUNDAY_SCHEDULE_END')))
-                    else:
-                        stop_events.append(('Lunch Break', _calculated_stop_times.get('WEEKDAY_LUNCH_BREAK_STOP')))
-                        stop_events.append(('End of Shift', _calculated_stop_times.get('WEEKDAY_SCHEDULE_END')))
-                    # Filter out None and past events
-                    now_time = now.time()
-                    upcoming_stops = [(label, t) for label, t in stop_events if t and now_time < t]
-                    if upcoming_stops:
-                        next_stop_label, next_stop_time = min(upcoming_stops, key=lambda x: x[1])
-                        print(f"Next timer stop event: {next_stop_label} at {next_stop_time.strftime('%H:%M:%S')}")
-                    else:
-                        print("No more timer stop events for today. Awaiting shift end.")
+                # --- Enhanced Logging for Next Timer Stop/Event ---
+                # Build a unified list of upcoming events (stops and starts) for clearer logging
+                upcoming_events = []
+                now_time = now.time()
+                
+                if current_day_of_week == 5:  # Saturday
+                    if 'SUNDAY_LUNCH_BREAK_STOP' in _calculated_stop_times and not _event_executed_flags.get('SUNDAY_LUNCH_BREAK_STOP', False):
+                        upcoming_events.append(('Stop: Saturday Lunch Break', _calculated_stop_times['SUNDAY_LUNCH_BREAK_STOP']))
+                    if 'SUNDAY_AFTERNOON_STOP' in _calculated_stop_times and not _event_executed_flags.get('SUNDAY_AFTERNOON_STOP', False):
+                        upcoming_events.append(('Stop: Saturday Afternoon Break', _calculated_stop_times['SUNDAY_AFTERNOON_STOP']))
+                    if 'SUNDAY_SCHEDULE_END' in _calculated_stop_times and not _event_executed_flags.get('SUNDAY_SCHEDULE_END', False):
+                        upcoming_events.append(('Stop: Saturday End of Shift', _calculated_stop_times['SUNDAY_SCHEDULE_END']))
+                else:  # Weekday
+                    # Monday special events
+                    if current_day_of_week == 0:
+                        if 'MONDAY_MID_MORNING_STOP' in _calculated_stop_times and not _event_executed_flags.get('MONDAY_MID_MORNING_STOP', False):
+                            upcoming_events.append(('Stop: Monday Mid-Morning', _calculated_stop_times['MONDAY_MID_MORNING_STOP']))
+                        if 'MONDAY_10AM_RESTART' in _calculated_stop_times and not _event_executed_flags.get('MONDAY_10AM_RESTART', False):
+                            upcoming_events.append(('Start: Monday 10AM Restart', _calculated_stop_times['MONDAY_10AM_RESTART']))
+
+                    # Lunch stop and resume
+                    if 'WEEKDAY_LUNCH_BREAK_STOP' in _calculated_stop_times and not _event_executed_flags.get('WEEKDAY_LUNCH_BREAK_STOP', False):
+                        upcoming_events.append(('Stop: Weekday Lunch Break', _calculated_stop_times['WEEKDAY_LUNCH_BREAK_STOP']))
+                    if 'WEEKDAY_AFTERNOON_STOP' in _calculated_stop_times and not _event_executed_flags.get('WEEKDAY_AFTERNOON_STOP', False):
+                        upcoming_events.append(('Stop: Weekday Afternoon Break', _calculated_stop_times['WEEKDAY_AFTERNOON_STOP']))
+
+                    # End of shift
+                    if 'WEEKDAY_SCHEDULE_END' in _calculated_stop_times and not _event_executed_flags.get('WEEKDAY_SCHEDULE_END', False):
+                        upcoming_events.append(('Stop: Weekday End of Shift', _calculated_stop_times['WEEKDAY_SCHEDULE_END']))
+
+                # Filter and pick earliest future event
+                future_events = [(label, t) for label, t in upcoming_events if t and now_time < t]
+                if future_events:
+                    next_label, next_time = min(future_events, key=lambda x: x[1])
+                    # Normalize label for earlier UX: show 'start'/'stop' compactly
+                    display_label = next_label.replace('Stop: ', 'stop (').replace('Start: ', 'start (') + ')'
+                    print(f"Next event: {display_label} at {next_time.strftime('%H:%M:%S')}")
                 else:
-                    # Existing logic for long_break: log next start event
-                    if next_event_datetime:
-                        print(f"Next event ({next_event_label}) at {next_event_datetime.strftime('%H:%M:%S')} on {next_event_datetime.date()}.")
-                    else:
-                        print("No clear next event determined for sleep calculation. This should not happen. Defaulting to polling interval.")
+                    print("No more scheduled events for today. Awaiting shift end or next day start.")
 
                 # --- Determine Next Event and Log It (Revised for clarity and accuracy) ---
                 next_event_datetime = None
@@ -903,74 +969,60 @@ def automate_timecamp_login():
                 potential_events_today = []
 
                 # Add calculated stop times if they haven't been executed and are in the future
-                # For weekdays, check all three stop types based on the day
-                if current_day_of_week == 6: # Sunday stops
-                    if 'SUNDAY_LUNCH_STOP' in _calculated_stop_times and not _event_executed_flags['SUNDAY_LUNCH_STOP']:
-                        potential_events_today.append((datetime.datetime.combine(current_date, _calculated_stop_times['SUNDAY_LUNCH_STOP']), "stop (sunday lunch stop)"))
-                    if 'SUNDAY_FINAL_STOP' in _calculated_stop_times and not _event_executed_flags['SUNDAY_FINAL_STOP']:
-                        potential_events_today.append((datetime.datetime.combine(current_date, _calculated_stop_times['SUNDAY_FINAL_STOP']), "stop (sunday final stop)"))
-                else: # Weekday stops
-                    # Mid-morning stop (Monday specific vs. general weekday)
-                    if current_day_of_week == 0: # Monday
-                        if 'MONDAY_MID_MORNING_STOP' in _calculated_stop_times and not _event_executed_flags['MONDAY_MID_MORNING_STOP']:
+                if current_day_of_week == 5:  # Saturday
+                    if 'SUNDAY_LUNCH_BREAK_STOP' in _calculated_stop_times and not _event_executed_flags.get('SUNDAY_LUNCH_BREAK_STOP', False):
+                        potential_events_today.append((datetime.datetime.combine(current_date, _calculated_stop_times['SUNDAY_LUNCH_BREAK_STOP']), "stop (saturday lunch stop)"))
+                    if 'SUNDAY_AFTERNOON_STOP' in _calculated_stop_times and not _event_executed_flags.get('SUNDAY_AFTERNOON_STOP', False):
+                        potential_events_today.append((datetime.datetime.combine(current_date, _calculated_stop_times['SUNDAY_AFTERNOON_STOP']), "stop (saturday afternoon stop)"))
+                    if 'SUNDAY_SCHEDULE_END' in _calculated_stop_times and not _event_executed_flags.get('SUNDAY_SCHEDULE_END', False):
+                        potential_events_today.append((datetime.datetime.combine(current_date, _calculated_stop_times['SUNDAY_SCHEDULE_END']), "stop (saturday final stop)"))
+                else:  # Weekday
+                    if current_day_of_week == 0:  # Monday
+                        if 'MONDAY_MID_MORNING_STOP' in _calculated_stop_times and not _event_executed_flags.get('MONDAY_MID_MORNING_STOP', False):
                             potential_events_today.append((datetime.datetime.combine(current_date, _calculated_stop_times['MONDAY_MID_MORNING_STOP']), "stop (monday mid-morning stop)"))
-                        # Monday 10 AM restart
-                        if 'MONDAY_10AM_RESTART' in _calculated_stop_times and not _event_executed_flags['MONDAY_10AM_RESTART']:
+                        if 'MONDAY_10AM_RESTART' in _calculated_stop_times and not _event_executed_flags.get('MONDAY_10AM_RESTART', False):
                             potential_events_today.append((datetime.datetime.combine(current_date, _calculated_stop_times['MONDAY_10AM_RESTART']), "start (monday 10am restart)"))
-                    else: # Other weekdays
-                        if 'WEEKDAY_MORNING_STOP_1' in _calculated_stop_times and not _event_executed_flags['WEEKDAY_MORNING_STOP_1']:
-                            potential_events_today.append((datetime.datetime.combine(current_date, _calculated_stop_times['WEEKDAY_MORNING_STOP_1']), "stop (weekday mid-morning stop)"))
-                    
-                    # Lunch stop
-                    if 'WEEKDAY_LUNCH_STOP' in _calculated_stop_times and not _event_executed_flags['WEEKDAY_LUNCH_STOP']:
-                        potential_events_today.append((datetime.datetime.combine(current_date, _calculated_stop_times['WEEKDAY_LUNCH_STOP']), "stop (weekday lunch stop)"))
-                    
-                    # Daily final stop (2 PM)
-                    if 'WEEKDAY_DAILY_FINAL_STOP' in _calculated_stop_times and not _event_executed_flags['WEEKDAY_DAILY_FINAL_STOP']:
-                        potential_events_today.append((datetime.datetime.combine(current_date, _calculated_stop_times['WEEKDAY_DAILY_FINAL_STOP']), "stop (weekday daily final stop)"))
+                    # Lunch stop and afternoon stop
+                    if 'WEEKDAY_LUNCH_BREAK_STOP' in _calculated_stop_times and not _event_executed_flags.get('WEEKDAY_LUNCH_BREAK_STOP', False):
+                        potential_events_today.append((datetime.datetime.combine(current_date, _calculated_stop_times['WEEKDAY_LUNCH_BREAK_STOP']), "stop (weekday lunch stop)"))
+                    if 'WEEKDAY_AFTERNOON_STOP' in _calculated_stop_times and not _event_executed_flags.get('WEEKDAY_AFTERNOON_STOP', False):
+                        potential_events_today.append((datetime.datetime.combine(current_date, _calculated_stop_times['WEEKDAY_AFTERNOON_STOP']), "stop (weekday afternoon stop)"))
+                    # Daily final stop
+                    if 'WEEKDAY_SCHEDULE_END' in _calculated_stop_times and not _event_executed_flags.get('WEEKDAY_SCHEDULE_END', False):
+                        potential_events_today.append((datetime.datetime.combine(current_date, _calculated_stop_times['WEEKDAY_SCHEDULE_END']), "stop (weekday daily final stop)"))
 
-                # If current shift is long_break, always consider current day's start first
-                # This covers the Monday 9:30-10 AM explicit break as well
+                # If current shift is long_break, always consider current day's start/restart first
                 if current_shift_type == 'long_break':
                     current_day_start_dt = None
-                    if current_day_of_week == 6: # Sunday
-                        if current_time_of_day < SUNDAY_SCHEDULE_START_WINDOW_END: # If before or within Sunday start window
-                            current_day_start_dt = datetime.datetime.combine(current_date, get_random_time_in_window(SUNDAY_SCHEDULE_START_WINDOW_START, SUNDAY_SCHEDULE_START_WINDOW_END))
-                    elif current_day_of_week == 0: # Monday, check for 10 AM restart
-                         if current_time_of_day < _calculated_stop_times.get('MONDAY_10AM_RESTART', MONDAY_10AM_RESTART_WINDOW_START):
-                            current_day_start_dt = datetime.datetime.combine(current_date, _calculated_stop_times.get('MONDAY_10AM_RESTART', MONDAY_10AM_RESTART_WINDOW_START))
-                    else: # Other weekdays
-                        if current_time_of_day < WEEKDAY_SCHEDULE_START_WINDOW_END: # If before or within Weekday morning start window
-                            current_day_start_dt = datetime.datetime.combine(current_date, get_random_time_in_window(WEEKDAY_SCHEDULE_START_WINDOW_START, WEEKDAY_SCHEDULE_START_WINDOW_END))
-                    
-                    if current_day_start_dt and current_day_start_dt > now:
-                        # Only add if it's the actual next event and not past.
-                        # This avoids adding duplicate 'start' events if already covered by potential_events_today.
-                        if next_event_datetime is None or current_day_start_dt < next_event_datetime:
-                            potential_events_today.append((current_day_start_dt, "start (current day shift/restart)"))
+                    if current_day_of_week == 5:
+                        if 'SUNDAY_SCHEDULE_START' in _calculated_stop_times and current_time_of_day < _calculated_stop_times['SUNDAY_SCHEDULE_START']:
+                            current_day_start_dt = datetime.datetime.combine(current_date, _calculated_stop_times['SUNDAY_SCHEDULE_START'])
+                    else:
+                        if 'WEEKDAY_SCHEDULE_START' in _calculated_stop_times and current_time_of_day < _calculated_stop_times['WEEKDAY_SCHEDULE_START']:
+                            current_day_start_dt = datetime.datetime.combine(current_date, _calculated_stop_times['WEEKDAY_SCHEDULE_START'])
+                        # Monday 10am restart
+                        if current_day_of_week == 0 and 'MONDAY_10AM_RESTART' in _calculated_stop_times and current_time_of_day < _calculated_stop_times['MONDAY_10AM_RESTART']:
+                            current_day_start_dt = datetime.datetime.combine(current_date, _calculated_stop_times['MONDAY_10AM_RESTART'])
 
-                # Find the earliest event for today
-                earliest_today_event = None
-                if potential_events_today:
-                    # Filter out events that are in the past relative to 'now'
-                    future_events_today = [e for e in potential_events_today if e[0] > now]
-                    if future_events_today:
-                        earliest_today_event = min(future_events_today, key=lambda x: x[0])
-                
-                # If no more events today, or if we are after all shifts today, calculate next day's morning start
+                    if current_day_start_dt and current_day_start_dt > now:
+                        potential_events_today.append((current_day_start_dt, "start (current day shift/restart)"))
+
+                # Find the earliest future event for today
+                future_events_today = [e for e in potential_events_today if e[0] > now]
+                earliest_today_event = min(future_events_today, key=lambda x: x[0]) if future_events_today else None
+
+                # If no more events today, calculate next day's morning start
                 if earliest_today_event is None:
                     days_until_next_shift_start = 1
                     next_start_window_start_time = WEEKDAY_SCHEDULE_START_WINDOW_START
                     next_start_window_end_time = WEEKDAY_SCHEDULE_START_WINDOW_END
 
-                    if current_day_of_week == 5: # If Saturday, next start is Sunday
+                    # If today is Saturday, skip Sunday (off day) and set next start to Monday
+                    if current_day_of_week == 5:  # Saturday -> Monday
+                        days_until_next_shift_start = 2
+                    elif current_day_of_week == 6:  # Sunday -> Monday
                         days_until_next_shift_start = 1
-                        next_start_window_start_time = SUNDAY_SCHEDULE_START_WINDOW_START
-                        next_start_window_end_time = SUNDAY_SCHEDULE_START_WINDOW_END
-                    elif current_day_of_week == 6: # If Sunday, next start is Monday
-                        days_until_next_shift_start = 1 # Already Sunday, next day is Monday
-                        # next_start_window_start_time and next_start_window_end_time are already for weekday
-                    
+
                     next_day_date = now.date() + datetime.timedelta(days=days_until_next_shift_start)
                     next_event_datetime = datetime.datetime.combine(next_day_date, get_random_time_in_window(next_start_window_start_time, next_start_window_end_time))
                     next_event_label = "start (next day)"
@@ -978,11 +1030,10 @@ def automate_timecamp_login():
                     next_event_datetime = earliest_today_event[0]
                     next_event_label = earliest_today_event[1]
 
-
                 if next_event_datetime:
                     print(f"Next event ({next_event_label}) at {next_event_datetime.strftime('%H:%M:%S')} on {next_event_datetime.date()}.")
                 else:
-                    print("No clear next event determined for sleep calculation. This should not happen. Defaulting to polling interval.")
+                    print("No clear next event determined for sleep calculation. Defaulting to polling interval.")
                     next_event_datetime = now + datetime.timedelta(minutes=POLLING_INTERVAL_MINUTES)
                     next_event_label = "fallback polling"
 
@@ -990,7 +1041,7 @@ def automate_timecamp_login():
                 randomized_end_datetime = None
                 randomized_end_event_key = None
                 if current_shift_type == 'work':
-                    if current_day_of_week == 6:
+                    if current_day_of_week == 5:
                         end_time = _calculated_stop_times.get('SUNDAY_SCHEDULE_END')
                         if end_time:
                             randomized_end_datetime = datetime.datetime.combine(current_date, end_time)
@@ -1003,7 +1054,6 @@ def automate_timecamp_login():
 
                 # --- NEW: Stop timer at randomized end time if needed ---
                 if randomized_end_datetime and now >= randomized_end_datetime and timer_is_running:
-                    # Only stop if not already marked as executed
                     if randomized_end_event_key and not _event_executed_flags.get(randomized_end_event_key, False):
                         print(f"--- Timer End Event ---\nAttempting to end timer at randomized shift end: {randomized_end_datetime.strftime('%H:%M:%S')} (Current time: {now.strftime('%H:%M:%S')})")
                         if try_stop_timer(driver):
@@ -1012,6 +1062,16 @@ def automate_timecamp_login():
                             _event_executed_flags[randomized_end_event_key] = True
                             if not check_for_nan_and_recover(driver):
                                 print("Warning: Could not clear 'NaNh NaNm' after stopping timer at randomized end. Proceeding with caution.")
+                            if randomized_end_event_key in ['WEEKDAY_SCHEDULE_END', 'SUNDAY_SCHEDULE_END']:
+                                print("Autoshutdown scheduled for 5 minutes.")
+                                os.system('shutdown /s /t 300')
+                                response = input("Do you want to continue the shutdown? (y/n): ").strip().lower()
+                                yes_variants = {'y', 'yy', 'yyy', 'yes', 'ye', 'ys'}
+                                if response in yes_variants:
+                                    print("Shutdown proceeding.")
+                                else:
+                                    os.system('shutdown /a')
+                                    print("Shutdown halted.")
 
                 # --- Sleep Determination Phase ---
                 sleep_duration_for_this_iteration = 1 # Default to minimal sleep for responsiveness
@@ -1025,9 +1085,7 @@ def automate_timecamp_login():
                         time_to_next_event_seconds = 1
                     sleep_duration_for_this_iteration = time_to_next_event_seconds
                     print(f"In long break. Next event ({next_event_label}) at {next_event_datetime.strftime('%H:%M:%S')} on {next_event_datetime.date()}. Sleeping for {int(sleep_duration_for_this_iteration / 60)} minutes and {int(sleep_duration_for_this_iteration % 60)} seconds.")
-                    if "next day" in next_event_label or "current day shift" in next_event_label or "monday 10am restart" in next_event_label:
-                        print(f"CONFIRMATION: All shifts for today ({current_date.strftime('%Y-%m-%d')}) are complete (or not started yet). Script is now sleeping until the next shift starts on {next_event_datetime.date()} at {next_event_datetime.strftime('%H:%M:%S')}.")
-                else: # current_shift_type is 'work'
+                else:
                     time_to_next_event_seconds = (next_event_datetime - now).total_seconds()
                     if time_to_next_event_seconds < 0:
                         time_to_next_event_seconds = 1
